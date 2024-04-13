@@ -5,10 +5,14 @@ Werkzeug Documentation:  https://werkzeug.palletsprojects.com/
 This file creates your application.
 """
 
-from app import app
-from flask import render_template, request, jsonify, send_file
 import os
-
+import datetime
+from app import app, db
+from app.models import Movie
+from app.forms import MovieForm
+from flask_wtf.csrf import generate_csrf
+from werkzeug.utils import secure_filename
+from flask import render_template, request, jsonify, send_file, session, send_from_directory
 
 ###
 # Routing for your application.
@@ -18,6 +22,54 @@ import os
 def index():
     return jsonify(message="This is the beginning of our API")
 
+@app.route('/api/v1/csrf-token', methods=['GET'])
+def get_csrf():
+    return jsonify({'csrf_token': generate_csrf()})
+
+@app.route('/api/v1/movies', methods=['GET', 'POST'])
+def movies():
+    form = MovieForm()
+    if form.validate_on_submit() and request.method == "POST":
+        photo = form.poster.data
+        title = form.title.data
+        created_at = datetime.datetime.now()
+        description = form.description.data
+        filename = secure_filename(photo.filename)
+
+        photo.save(
+            os.path.join(
+            app.config["UPLOAD_FOLDER"],
+            filename))
+
+        movie = Movie(
+            title,
+            description,
+            filename,
+            created_at)
+
+        db.session.add(movie)
+        db.session.commit()
+
+        return jsonify({
+            "message": "Movie Successfully added",
+            "title": title,
+            "poster": filename, 
+            "description": description
+            })
+    elif request.method == "GET":
+        movies = db.session.execute(db.select(Movie)).scalars()
+        movies = [{'id': movie.id, 'title': movie.title, 'description': movie.description, 'poster': "/api/v1/posters/"+movie.poster} for movie in movies]
+        return jsonify({'movies': movies})
+    else:
+        return jsonify({ 
+            "errors": 
+                form_errors(form)
+            })
+
+@app.route('/api/v1/posters/<filename>')
+def get_image(filename):
+    print(filename)
+    return send_from_directory(os.path.join(os.getcwd(),app.config['UPLOAD_FOLDER']),filename)
 
 ###
 # The functions below should be applicable to all Flask apps.
@@ -44,7 +96,6 @@ def send_text_file(file_name):
     file_dot_text = file_name + '.txt'
     return app.send_static_file(file_dot_text)
 
-
 @app.after_request
 def add_header(response):
     """
@@ -55,7 +106,6 @@ def add_header(response):
     response.headers['X-UA-Compatible'] = 'IE=Edge,chrome=1'
     response.headers['Cache-Control'] = 'public, max-age=0'
     return response
-
 
 @app.errorhandler(404)
 def page_not_found(error):
